@@ -26,6 +26,7 @@
 #include <linux/kthread.h>
 
 #include "linux_nvme_ioctl.h"
+#include "FIF-Dedup_config.h"
 
 #include "nvme.h"
 #include "fabrics.h"
@@ -574,6 +575,11 @@ static void kv_async_completion(struct request *req, blk_status_t status)
 	aiocb->req = req;
 	aiocb->event.result = le32_to_cpu(nvme_req(req)->result.u32);
 	aiocb->event.status = le16_to_cpu(nvme_req(req)->status);
+
+	// 获取 dc、bio
+	struct nvme_command *cmd = aiocb->cmd;
+	struct dedup_config *dc = cmd->common.cdw2[0];
+	struct bio *bio = cmd->common.cdw2[1];
 
 	insert_aiocb_to_worker(aiocb);
 }
@@ -2193,11 +2199,11 @@ int __nvme_submit_kv_user_cmd(struct request_queue *q, struct nvme_command *cmd,
 		aiocb->event.ctxid = pthr_cmd->ctxid;
 		aiocb->event.reqid = pthr_cmd->reqid;
 		aiocb->opcode = cmd->common.opcode;
-		req->end_io_data = aiocb;
-		blk_execute_rq_nowait(req->q, disk, req, 0, kv_async_completion);
+		req->end_io_data = aiocb; // req->end_io_data->cmd 可以获取到 nvme_command
+		blk_execute_rq_nowait(req->q, disk, req, 0, kv_async_completion); // 异步执行请求，不等待完成
 		return 0;
 	} else {
-		blk_execute_rq(req->q, disk, req, 0);
+		blk_execute_rq(req->q, disk, req, 0); // 同步执行请求，等待完成
 		if (nvme_req(req)->flags & NVME_REQ_CANCELLED)
 			ret = -EINTR;
 		else
@@ -2279,6 +2285,12 @@ static int nvme_user_kv_cmd(struct nvme_ctrl *ctrl,
 #else
 	c.common.nsid = cpu_to_le32(cmd.nsid);
 #endif
+
+	// 复制用户空间的dc和bio到驱动层
+	c.common.cdw2[0] = cmd.cdw2; // dc
+	c.common.cdw2[1] = cmd.cdw3; // bio
+
+
 	if (cmd.timeout_ms)
 		timeout = msecs_to_jiffies(cmd.timeout_ms);
 

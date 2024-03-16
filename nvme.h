@@ -20,7 +20,7 @@
 
 #include <trace/events/block.h>
 
-#define KSID_SUPPORT
+// #define KSID_SUPPORT
 #define NVME_DEBUG 0
 
 #define is_kv_append_cmd(opcode)      ((opcode) == nvme_cmd_kv_append)
