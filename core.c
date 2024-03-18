@@ -27,6 +27,7 @@
 
 #include "linux_nvme_ioctl.h"
 #include "FIF-Dedup_config.h"
+#include "FIF-Dedup_kvstore.h"
 
 #include "nvme.h"
 #include "fabrics.h"
@@ -564,6 +565,100 @@ static void insert_aiocb_to_worker(struct nvme_kaiocb *aiocb)
 	wake_up_aio_worker(ctx);
 }
 
+static int dec_fp_old(u8 *fp_old, u32 size) {
+	return 0;
+}
+
+static int update_metadata(struct nvme_command *cmd, int result, int status) {
+	// 获取 dc、bio
+	struct nvme_command *cmd = aiocb->cmd;
+	struct dedup_config *dc = (struct dedup_config *) ((uint64_t)cmd->cdw2[1] << 32) | cmd->cdw2[0];
+	struct bio *bio = (struct bio *)cmd->metadata;
+
+	u64 lbn;
+	u8 fp_old[MAX_FINGER_PRINT_SIZE];
+	u8 *fp_new;
+	int fp_old_size;
+	u32 vsize;
+	int r, r1, r2;
+
+	fp_new = cmd->kv_store.key;
+	lbn = bio_lbn(dc, bio);
+
+	// lookup fp_old
+	r1 = dc->kvs_lbn_fp->kvs_lookup(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_old, 16);
+	r2 = dc->kvs_lbn_fp->kvs_lookup(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_old, 8);
+	if (r1 < 0 && r2 < 0) {
+		// fp_old not exit
+		fp_old_size = 0;
+	}
+	else if (r1 > 0 && r2 < 0) {
+		fp_old_size = 16;
+	}
+	else if (r1 < 0 && r2 > 0) {
+		fp_old_size = 16;
+	}
+	else {
+		// error
+		return -1;
+	}
+
+	switch (cmd->common.opcode)
+	{
+	case nvme_cmd_kv_store:
+		switch (result) {
+		case nvme_result_store_16B:
+			if (fp_old_size == 16) {
+				if(strncmp(fp_old, fp_new, 16) != 0) {
+					dec_fp_old(fp_old, 16);
+				}
+				dc->kvs_lbn_fp->kvs_delete(dc->kvs_lbn_fp, &lbn, sizeof(lbn));
+				dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 16);
+			}
+			else (fp_old_size == 8) {
+				dc->kvs_lbn_fp->kvs_delete(dc->kvs_lbn_fp, &lbn, sizeof(lbn));
+				dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 16);
+			}
+			else {
+				dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 16);
+			}
+			break;
+		case nvme_result_store_8B:
+			if (fp_old_size == 8) {
+				if (strncmp(fp_old, fp_new, 8) != 0) {
+					dec_fp_old(fp_old, 8);
+				}
+				dc->kvs_lbn_fp->kvs_delete(dc->kvs_lbn_fp, &lbn, sizeof(lbn));
+				dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 8);
+			}
+			else if (fp_old_size == 16) {
+				dc->kvs_lbn_fp->kvs_delete(dc->kvs_lbn_fp, &lbn, sizeof(lbn));
+				dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 8);
+			}
+			else {
+				dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 8);
+			}
+			break;
+		}
+		break;
+	case nvme_cmd_kv_retrieve: 
+		/* code */
+		break;
+	case nvme_cmd_kv_delete: 
+		/* code */
+		break;
+	case nvme_cmd_kv_exist:
+		/* code */
+		break;
+	case nvme_cmd_kv_decrease:
+		/* code */
+		break;
+	default:
+		break;
+	}
+	return 0;
+}
+
 static void kv_async_completion(struct request *req, blk_status_t status)
 {
 	if (NVME_DEBUG) {
@@ -575,11 +670,6 @@ static void kv_async_completion(struct request *req, blk_status_t status)
 	aiocb->req = req;
 	aiocb->event.result = le32_to_cpu(nvme_req(req)->result.u32);
 	aiocb->event.status = le16_to_cpu(nvme_req(req)->status);
-
-	// 获取 dc、bio
-	struct nvme_command *cmd = aiocb->cmd;
-	struct dedup_config *dc = (struct dedup_config *) ((uint64_t)cmd->cdw2[1] << 32) | cmd->cdw2[0];
-	struct bio *bio = (struct bio *)cmd->metadata;
 
 	insert_aiocb_to_worker(aiocb);
 }

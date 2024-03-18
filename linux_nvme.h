@@ -690,6 +690,15 @@ enum nvme_opcode {
 	nvme_cmd_kv_iter_req = 0xB1,
 	nvme_cmd_kv_iter_read = 0xB2,
 	nvme_cmd_kv_exist = 0xB3,
+	nvme_cmd_kv_decrease = 0xB4,
+};
+
+enum nvme_result_code {
+	nvme_result_store_fail,
+	nvme_result_store_16B,
+	nvme_result_store_8B,
+	nvme_result_retrieve_success,
+	nvme_result_retrieve_not_exist,
 };
 
 #define KVCMD_INLINE_KEY_MAX    (16)
