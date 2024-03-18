@@ -578,8 +578,8 @@ static void kv_async_completion(struct request *req, blk_status_t status)
 
 	// 获取 dc、bio
 	struct nvme_command *cmd = aiocb->cmd;
-	struct dedup_config *dc = cmd->common.cdw2[0];
-	struct bio *bio = cmd->common.cdw2[1];
+	struct dedup_config *dc = (struct dedup_config *) ((uint64_t)cmd->cdw2[1] << 32) | cmd->cdw2[0];
+	struct bio *bio = (struct bio *)cmd->metadata;
 
 	insert_aiocb_to_worker(aiocb);
 }
@@ -2288,7 +2288,9 @@ static int nvme_user_kv_cmd(struct nvme_ctrl *ctrl,
 
 	// 复制用户空间的dc和bio到驱动层
 	c.common.cdw2[0] = cmd.cdw2; // dc
-	c.common.cdw2[1] = cmd.cdw3; // bio
+	c.common.cdw2[1] = cmd.cdw3;
+
+	c.common.metadata = ((uint64_t)cmd->cdw5 << 32) | cmd->cdw4; // bio
 
 
 	if (cmd.timeout_ms)

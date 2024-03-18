@@ -98,8 +98,8 @@ struct nvme_passthru_kv_cmd {
 	__u16 rsvd1;
 	__u32 nsid;
 	__u32 cdw2; // struct dedup_config *dc
-	__u32 cdw3; // struct bio *bio
-	__u32 cdw4;
+	__u32 cdw3; 
+	__u32 cdw4; // struct bio *bio
 	__u32 cdw5;
 	__u64 data_addr;
 	__u32 data_len;
