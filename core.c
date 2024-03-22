@@ -571,7 +571,6 @@ static int dec_fp_old(u8 *fp_old, u32 size) {
 
 static int update_metadata(struct nvme_command *cmd, int result, int status) {
 	// 获取 dc、bio
-	struct nvme_command *cmd = aiocb->cmd;
 	// struct dedup_config *dc = (struct dedup_config *) ((uint64_t)cmd->cdw2[1] << 32) | cmd->cdw2[0];
 	struct dedup_config *dc = (struct dedup_config *) cmd->kv_store.rsvd;
 	struct bio *bio = (struct bio *)cmd->common.metadata;
@@ -616,7 +615,7 @@ static int update_metadata(struct nvme_command *cmd, int result, int status) {
 				dc->kvs_lbn_fp->kvs_delete(dc->kvs_lbn_fp, &lbn, sizeof(lbn));
 				dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 16);
 			}
-			else (fp_old_size == 8) {
+			else if (fp_old_size == 8) {
 				dec_fp_old(fp_old, 16);
 				dc->kvs_lbn_fp->kvs_delete(dc->kvs_lbn_fp, &lbn, sizeof(lbn));
 				dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 16);
@@ -674,7 +673,7 @@ static void kv_async_completion(struct request *req, blk_status_t status)
 	aiocb->event.result = le32_to_cpu(nvme_req(req)->result.u32);
 	aiocb->event.status = le16_to_cpu(nvme_req(req)->status);
 
-	update_metadata(aiocb->cmd, aiocb->event.result, aiocb->event.status);
+	update_metadata(&(aiocb->cmd), aiocb->event.result, aiocb->event.status);
 
 	insert_aiocb_to_worker(aiocb);
 }
