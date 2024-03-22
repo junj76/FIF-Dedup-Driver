@@ -572,8 +572,9 @@ static int dec_fp_old(u8 *fp_old, u32 size) {
 static int update_metadata(struct nvme_command *cmd, int result, int status) {
 	// 获取 dc、bio
 	struct nvme_command *cmd = aiocb->cmd;
-	struct dedup_config *dc = (struct dedup_config *) ((uint64_t)cmd->cdw2[1] << 32) | cmd->cdw2[0];
-	struct bio *bio = (struct bio *)cmd->metadata;
+	// struct dedup_config *dc = (struct dedup_config *) ((uint64_t)cmd->cdw2[1] << 32) | cmd->cdw2[0];
+	struct dedup_config *dc = (struct dedup_config *) cmd->kv_store.rsvd;
+	struct bio *bio = (struct bio *)cmd->common.metadata;
 
 	u64 lbn;
 	u8 fp_old[MAX_FINGER_PRINT_SIZE];
@@ -616,6 +617,7 @@ static int update_metadata(struct nvme_command *cmd, int result, int status) {
 				dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 16);
 			}
 			else (fp_old_size == 8) {
+				dec_fp_old(fp_old, 16);
 				dc->kvs_lbn_fp->kvs_delete(dc->kvs_lbn_fp, &lbn, sizeof(lbn));
 				dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 16);
 			}
@@ -632,6 +634,7 @@ static int update_metadata(struct nvme_command *cmd, int result, int status) {
 				dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 8);
 			}
 			else if (fp_old_size == 16) {
+				dec_fp_old(fp_old, 8);
 				dc->kvs_lbn_fp->kvs_delete(dc->kvs_lbn_fp, &lbn, sizeof(lbn));
 				dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 8);
 			}
@@ -670,6 +673,8 @@ static void kv_async_completion(struct request *req, blk_status_t status)
 	aiocb->req = req;
 	aiocb->event.result = le32_to_cpu(nvme_req(req)->result.u32);
 	aiocb->event.status = le16_to_cpu(nvme_req(req)->status);
+
+	update_metadata(aiocb->cmd, aiocb->event.result, aiocb->event.status);
 
 	insert_aiocb_to_worker(aiocb);
 }
@@ -2303,6 +2308,8 @@ int __nvme_submit_kv_user_cmd(struct request_queue *q, struct nvme_command *cmd,
 			*result = le32_to_cpu(nvme_req(req)->result.u32);
 		if (status)
 			*status = le16_to_cpu(nvme_req(req)->status);
+
+		update_metadata(cmd, result, status);
 	}
 
 	if (need_to_copy) {
@@ -2380,7 +2387,9 @@ static int nvme_user_kv_cmd(struct nvme_ctrl *ctrl,
 	c.common.cdw2[0] = cmd.cdw2; // dc
 	c.common.cdw2[1] = cmd.cdw3;
 
-	c.common.metadata = ((uint64_t)cmd->cdw5 << 32) | cmd->cdw4; // bio
+	// c.common.metadata = ((uint64_t)cmd->cdw5 << 32) | cmd->cdw4; // bio
+	c.kv_store.offset = cmd->cdw4;
+	c.kv_store.rsvd2 = cmd.cdw5;
 
 
 	if (cmd.timeout_ms)
