@@ -24,6 +24,7 @@
 #include <linux/file.h>
 #include <linux/eventfd.h>
 #include <linux/kthread.h>
+#include <linux/kdev_t.h>
 
 #include "linux_nvme_ioctl.h"
 #include "FIF-Dedup_config.h"
@@ -159,6 +160,16 @@ struct aio_worker_ctx{
 struct aio_worker_ctx * __percpu aio_w_ctx;
 /* percpu aio worker pointer */
 struct task_struct ** __percpu aio_worker;
+
+/* Returns the logical block number for the bio. */
+static uint64_t bio_lbn(struct dedup_config *dc, struct bio *bio)
+{
+	sector_t lbn = bio->bi_iter.bi_sector;
+
+	sector_div(lbn, dc->sectors_per_block);
+
+	return lbn;
+}
 
 
 static void remove_kaioctx(struct nvme_kaioctx * ctx)
