@@ -596,7 +596,7 @@ static int update_metadata(struct nvme_command *cmd, int result, int status) {
 	fp_new = cmd->kv_store.key;
 	lbn = bio_lbn(dc, bio);
 
-	r = dc->kvs_lbn_fp->kvs_lookup(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_old, vsize);
+	r = dc->kvs_lbn_fp->kvs_lookup(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_old, &vsize);
 
 	if (r < 0) {
 		return -1;
