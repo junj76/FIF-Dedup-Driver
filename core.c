@@ -608,7 +608,7 @@ static int update_metadata(struct nvme_command *cmd, int result, int status) {
 		case nvme_result_store_16B:
 			if (vsize == 16) {
 				if (strncmp(fp_old, fp_new, 16) != 0) {
-					dec_fp_old(fp_old);
+					dec_fp_old(fp_old, vsize);
 				}
 				else {
 					break;
@@ -620,7 +620,7 @@ static int update_metadata(struct nvme_command *cmd, int result, int status) {
 		case nvme_result_store_8B:
 			if (vsize == 8) {
 				if (strncmp(fp_old, fp_new, 8) != 0) {
-					dec_fp_old(fp_old);
+					dec_fp_old(fp_old, vsize);
 				}
 				else {
 					break;
