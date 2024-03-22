@@ -590,83 +590,56 @@ static int update_metadata(struct nvme_command *cmd, int result, int status) {
 	u8 fp_old[MAX_FINGER_PRINT_SIZE];
 	u8 *fp_new;
 	int fp_old_size;
-	u32 vsize;
-	int r, r1, r2;
+	int32_t vsize;
+	int r;
 
 	fp_new = cmd->kv_store.key;
 	lbn = bio_lbn(dc, bio);
 
-	// lookup fp_old
-	r1 = dc->kvs_lbn_fp->kvs_lookup(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_old, 16);
-	r2 = dc->kvs_lbn_fp->kvs_lookup(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_old, 8);
-	if (r1 < 0 && r2 < 0) {
-		// fp_old not exit
-		fp_old_size = 0;
-	}
-	else if (r1 > 0 && r2 < 0) {
-		fp_old_size = 16;
-	}
-	else if (r1 < 0 && r2 > 0) {
-		fp_old_size = 16;
-	}
-	else {
-		// error
+	r = dc->kvs_lbn_fp->kvs_lookup(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_old, vsize);
+
+	if (r < 0) {
 		return -1;
 	}
 
-	switch (cmd->common.opcode)
-	{
+	switch (cmd->common.opcode) {
 	case nvme_cmd_kv_store:
 		switch (result) {
 		case nvme_result_store_16B:
-			if (fp_old_size == 16) {
-				if(strncmp(fp_old, fp_new, 16) != 0) {
-					dec_fp_old(fp_old, 16);
+			if (vsize == 16) {
+				if (strncmp(fp_old, fp_new, 16) != 0) {
+					dec_fp_old(fp_old);
 				}
-				dc->kvs_lbn_fp->kvs_delete(dc->kvs_lbn_fp, &lbn, sizeof(lbn));
-				dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 16);
+				else {
+					break;
+				}
 			}
-			else if (fp_old_size == 8) {
-				dec_fp_old(fp_old, 16);
-				dc->kvs_lbn_fp->kvs_delete(dc->kvs_lbn_fp, &lbn, sizeof(lbn));
-				dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 16);
-			}
-			else {
-				dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 16);
-			}
+			dc->kvs_lbn_fp->kvs_delete(dc->kvs_lbn_fp, &lbn, sizeof(lbn));
+			dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 16);
 			break;
 		case nvme_result_store_8B:
-			if (fp_old_size == 8) {
+			if (vsize == 8) {
 				if (strncmp(fp_old, fp_new, 8) != 0) {
-					dec_fp_old(fp_old, 8);
+					dec_fp_old(fp_old);
 				}
-				dc->kvs_lbn_fp->kvs_delete(dc->kvs_lbn_fp, &lbn, sizeof(lbn));
-				dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 8);
+				else {
+					break;
+				}
 			}
-			else if (fp_old_size == 16) {
-				dec_fp_old(fp_old, 8);
-				dc->kvs_lbn_fp->kvs_delete(dc->kvs_lbn_fp, &lbn, sizeof(lbn));
-				dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 8);
-			}
-			else {
-				dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 8);
-			}
+			dc->kvs_lbn_fp->kvs_delete(dc->kvs_lbn_fp, &lbn, sizeof(lbn));
+			dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 8);	
+			break;
+		case nvme_result_store_fail:
 			break;
 		}
 		break;
-	case nvme_cmd_kv_retrieve: 
-		/* code */
+	case nvme_cmd_kv_retrieve:
 		break;
-	case nvme_cmd_kv_delete: 
-		/* code */
+	case nvme_cmd_kv_delete:
 		break;
 	case nvme_cmd_kv_exist:
-		/* code */
 		break;
 	case nvme_cmd_kv_decrease:
-		/* code */
-		break;
-	default:
 		break;
 	}
 	return 0;
@@ -2398,7 +2371,7 @@ static int nvme_user_kv_cmd(struct nvme_ctrl *ctrl,
 	c.common.cdw2[1] = cmd.cdw3;
 
 	// c.common.metadata = ((uint64_t)cmd->cdw5 << 32) | cmd->cdw4; // bio
-	c.kv_store.offset = cmd->cdw4;
+	c.kv_store.offset = cmd.cdw4;
 	c.kv_store.rsvd2 = cmd.cdw5;
 
 
