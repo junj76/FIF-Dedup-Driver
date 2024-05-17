@@ -24,11 +24,8 @@
 #include <linux/file.h>
 #include <linux/eventfd.h>
 #include <linux/kthread.h>
-#include <linux/kdev_t.h>
 
 #include "linux_nvme_ioctl.h"
-#include "FIF-Dedup_config.h"
-#include "FIF-Dedup_kvstore.h"
 
 #include "nvme.h"
 #include "fabrics.h"
@@ -160,16 +157,6 @@ struct aio_worker_ctx{
 struct aio_worker_ctx * __percpu aio_w_ctx;
 /* percpu aio worker pointer */
 struct task_struct ** __percpu aio_worker;
-
-/* Returns the logical block number for the bio. */
-static uint64_t bio_lbn(struct dedup_config *dc, struct bio *bio)
-{
-	sector_t lbn = bio->bi_iter.bi_sector;
-
-	sector_div(lbn, dc->sectors_per_block);
-
-	return lbn;
-}
 
 
 static void remove_kaioctx(struct nvme_kaioctx * ctx)
@@ -576,75 +563,6 @@ static void insert_aiocb_to_worker(struct nvme_kaiocb *aiocb)
 	wake_up_aio_worker(ctx);
 }
 
-static int dec_fp_old(u8 *fp_old, u32 size) {
-	return 0;
-}
-
-static int update_metadata(struct nvme_command *cmd, int result, int status) {
-	// 获取 dc、bio
-	// struct dedup_config *dc = (struct dedup_config *) ((uint64_t)cmd->cdw2[1] << 32) | cmd->cdw2[0];
-	struct dedup_config *dc = (struct dedup_config *) cmd->kv_store.rsvd;
-	struct bio *bio = (struct bio *)cmd->common.metadata;
-
-	u64 lbn;
-	u8 fp_old[MAX_FINGER_PRINT_SIZE];
-	u8 *fp_new;
-	int fp_old_size;
-	int32_t vsize;
-	int r;
-
-	fp_new = cmd->kv_store.key;
-	lbn = bio_lbn(dc, bio);
-
-	r = dc->kvs_lbn_fp->kvs_lookup(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_old, &vsize);
-
-	if (r < 0) {
-		return -1;
-	}
-
-	switch (cmd->common.opcode) {
-	case nvme_cmd_kv_store:
-		switch (result) {
-		case nvme_result_store_16B:
-			if (vsize == 16) {
-				if (strncmp(fp_old, fp_new, 16) != 0) {
-					dec_fp_old(fp_old, vsize);
-				}
-				else {
-					break;
-				}
-			}
-			dc->kvs_lbn_fp->kvs_delete(dc->kvs_lbn_fp, &lbn, sizeof(lbn));
-			dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 16);
-			break;
-		case nvme_result_store_8B:
-			if (vsize == 8) {
-				if (strncmp(fp_old, fp_new, 8) != 0) {
-					dec_fp_old(fp_old, vsize);
-				}
-				else {
-					break;
-				}
-			}
-			dc->kvs_lbn_fp->kvs_delete(dc->kvs_lbn_fp, &lbn, sizeof(lbn));
-			dc->kvs_lbn_fp->kvs_insert(dc->kvs_lbn_fp, &lbn, sizeof(lbn), fp_new, 8);	
-			break;
-		case nvme_result_store_fail:
-			break;
-		}
-		break;
-	case nvme_cmd_kv_retrieve:
-		break;
-	case nvme_cmd_kv_delete:
-		break;
-	case nvme_cmd_kv_exist:
-		break;
-	case nvme_cmd_kv_decrease:
-		break;
-	}
-	return 0;
-}
-
 static void kv_async_completion(struct request *req, blk_status_t status)
 {
 	if (NVME_DEBUG) {
@@ -656,8 +574,6 @@ static void kv_async_completion(struct request *req, blk_status_t status)
 	aiocb->req = req;
 	aiocb->event.result = le32_to_cpu(nvme_req(req)->result.u32);
 	aiocb->event.status = le16_to_cpu(nvme_req(req)->status);
-
-	update_metadata(&(aiocb->cmd), aiocb->event.result, aiocb->event.status);
 
 	insert_aiocb_to_worker(aiocb);
 }
@@ -2164,8 +2080,11 @@ int __nvme_submit_kv_user_cmd(struct request_queue *q, struct nvme_command *cmd,
 	unsigned len = 0;
 	unsigned long start_time = jiffies;
 
-	if (!disk)
+	if (!disk){
+		printk(KERN_INFO "!disk");
 		return -EFAULT;
+	}
+		// return -EFAULT;
 
 	if (aio) {
 		aiocb = get_aiocb(pthr_cmd->reqid);
@@ -2277,11 +2196,11 @@ int __nvme_submit_kv_user_cmd(struct request_queue *q, struct nvme_command *cmd,
 		aiocb->event.ctxid = pthr_cmd->ctxid;
 		aiocb->event.reqid = pthr_cmd->reqid;
 		aiocb->opcode = cmd->common.opcode;
-		req->end_io_data = aiocb; // req->end_io_data->cmd 可以获取到 nvme_command
-		blk_execute_rq_nowait(req->q, disk, req, 0, kv_async_completion); // 异步执行请求，不等待完成
+		req->end_io_data = aiocb;
+		blk_execute_rq_nowait(req->q, disk, req, 0, kv_async_completion);
 		return 0;
 	} else {
-		blk_execute_rq(req->q, disk, req, 0); // 同步执行请求，等待完成
+		blk_execute_rq(req->q, disk, req, 0);
 		if (nvme_req(req)->flags & NVME_REQ_CANCELLED)
 			ret = -EINTR;
 		else
@@ -2291,8 +2210,6 @@ int __nvme_submit_kv_user_cmd(struct request_queue *q, struct nvme_command *cmd,
 			*result = le32_to_cpu(nvme_req(req)->result.u32);
 		if (status)
 			*status = le16_to_cpu(nvme_req(req)->status);
-
-		update_metadata(cmd, result, status);
 	}
 
 	if (need_to_copy) {
@@ -2349,14 +2266,15 @@ static int nvme_user_kv_cmd(struct nvme_ctrl *ctrl,
 	unsigned iter_handle = 0;
 	if (!capable(CAP_SYS_ADMIN))
 		return -EACCES;
-	if (copy_from_user(&cmd, ucmd, sizeof(cmd)))
-		return -EFAULT;
+	memcpy(&cmd, ucmd, sizeof(cmd));
 	if (cmd.flags)
 		return -EINVAL;
 
 	/* filter out non kv command */
-	if (!is_kv_cmd(cmd.opcode))
+	if (!is_kv_cmd(cmd.opcode)) {
+		printk(KERN_INFO "not kv cmd");
 		return -EINVAL;
+	}
 	memset(&c, 0, sizeof(c));
 	c.common.opcode = cmd.opcode;
 	c.common.flags = cmd.flags;
@@ -2365,16 +2283,6 @@ static int nvme_user_kv_cmd(struct nvme_ctrl *ctrl,
 #else
 	c.common.nsid = cpu_to_le32(cmd.nsid);
 #endif
-
-	// 复制用户空间的dc和bio到驱动层
-	c.common.cdw2[0] = cmd.cdw2; // dc
-	c.common.cdw2[1] = cmd.cdw3;
-
-	// c.common.metadata = ((uint64_t)cmd->cdw5 << 32) | cmd->cdw4; // bio
-	c.kv_store.offset = cmd.cdw4;
-	c.kv_store.rsvd2 = cmd.cdw5;
-
-
 	if (cmd.timeout_ms)
 		timeout = msecs_to_jiffies(cmd.timeout_ms);
 
@@ -2490,10 +2398,8 @@ static int nvme_user_kv_cmd(struct nvme_ctrl *ctrl,
 			&cmd.result, &cmd.status, timeout, aio);
 
 exit:
-	if (put_user(cmd.result, &ucmd->result))
-		return -EFAULT;
-	if (put_user(cmd.status, &ucmd->status))
-		return -EFAULT;
+	ucmd->result = cmd.result;
+	ucmd->status = cmd.status;
 	return status;
 }
 
